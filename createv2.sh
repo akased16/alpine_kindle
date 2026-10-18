@@ -8,7 +8,7 @@
 REPO="http://dl-cdn.alpinelinux.org/alpine"
 MNT="/mnt/alpine"
 IMAGE="./alpine.ext3"
-IMAGESIZE=1536 #Megabytes
+IMAGESIZE=1536 #Megabytes (1.5G)
 
 ALPINESETUP="source /etc/profile
 echo kindle > /etc/hostname
@@ -24,23 +24,19 @@ apk add xorg-server-xephyr xwininfo xdotool xinput dbus-x11 sudo bash nano git
 # --- theme engines ---
 apk add desktop-file-utils gtk-engines gtk-murrine-engine gnome-themes-extra consolekit
 
-# --- LXQt core (v3.18; openbox is the default WM for lxqt-desktop on Xorg) ---
+# --- LXQt core (v3.18 community; openbox is the default WM on Xorg) ---
 apk add lxqt-desktop lxqt-core lxqt-panel lxqt-admin lxqt-config \
         lxqt-notificationd lxqt-powermanagement lxqt-themes openbox
 # 注销/重启/关机需要 elogind + polkit-elogind
 apk add elogind polkit-elogind
 
-# --- file manager (LXQt 自带 pcmanfm-qt，可选追加) ---
-# 如需额外文件管理器，取消下一行注释：
-# apk add pcmanfm-qt
-
-# --- locale (中文显示字体已移除；如需中文可用 font-wqy-microhei 替代) ---
-apk add musl-locales font-wqy-microhei
+# --- 中文字体 + locale ---
+# font-droid-nonlatin (main仓库, ~6.5 MiB) 覆盖中文显示
+apk add musl-locales font-droid-nonlatin
 localedef -i zh_CN -f UTF-8 zh_CN.UTF-8 2>/dev/null || true
 
-# --- 中文输入法 (fcitx5) ---
-apk add fcitx5 fcitx5-chinese-addons fcitx5-configtool \
-        fcitx5-gtk3 fcitx5-lang fcitx5-chinese-addons-lang
+# --- 中文输入法 (ibus + libpinyin, v3.18 community) ---
+apk add ibus ibus-libpinyin ibus-gtk3 ibus-lang
 
 # --- virtual keyboard + browser ---
 apk add onboard chromium
@@ -52,10 +48,10 @@ addgroup sudo
 addgroup alpine sudo
 
 # --- 输入法环境变量 (全局兜底) ---
-cat > /etc/profile.d/fcitx.sh <<'EOF'
-export GTK_IM_MODULE=fcitx
-export QT_IM_MODULE=fcitx
-export XMODIFIERS=@im=fcitx
+cat > /etc/profile.d/ibus.sh <<'EOF'
+export GTK_IM_MODULE=ibus
+export QT_IM_MODULE=ibus
+export XMODIFIERS=@im=ibus
 export LANG=zh_CN.UTF-8
 export LC_ALL=zh_CN.UTF-8
 EOF
@@ -90,17 +86,17 @@ SIZE=$(xwininfo -root -display :0 | egrep "geometry" | cut -d " "  -f4)
 env DISPLAY=:0 Xephyr :1 -title "L:D_N:application_ID:xephyr" -ac -br -screen $SIZE -cc 4 -reset -terminate &
 sleep 3
 
-# 以 alpine 用户身份启动 fcitx5 + LXQt
-su alpine -c "export DISPLAY=:1 GTK_IM_MODULE=fcitx QT_IM_MODULE=fcitx XMODIFIERS=@im=fcitx LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8; fcitx5 -d; lxqt-session"
+# 以 alpine 用户身份，在同一个 session bus 中启动 ibus 和 LXQt
+su alpine -c "export DISPLAY=:1 GTK_IM_MODULE=ibus QT_IM_MODULE=ibus XMODIFIERS=@im=ibus LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8; exec dbus-run-session -- sh -c 'ibus-daemon -drx; lxqt-session'"
 
-killall Xephyr'
+killall Xephyr 2>/dev/null'
 
 
 # ENSURE ROOT
 [ "$(whoami)" != "root" ] && echo "This script needs to be run as root" && exec sudo -- "$0" "$@"
 
 
-# GETTING APK-TOOLS-STATIC
+# GETTING APK-TOOLS-STATIC (v3.18)
 echo "Determining version of apk-tools-static"
 curl "$REPO/v3.18/main/armhf/APKINDEX.tar.gz" --output /tmp/APKINDEX.tar.gz
 tar -xzf /tmp/APKINDEX.tar.gz -C /tmp
@@ -137,7 +133,7 @@ mount -t proc none "$MNT/proc"
 mount -o bind /sys "$MNT/sys"
 
 
-# CONFIGURE ALPINE
+# CONFIGURE ALPINE (仅 main + community，无 testing)
 cp /etc/resolv.conf "$MNT/etc/resolv.conf"
 cat > "$MNT/etc/apk/repositories" <<EOF
 $REPO/v3.18/main
@@ -156,7 +152,7 @@ rm "$MNT/usr/bin/qemu-arm-static"
 
 # UNMOUNT IMAGE & CLEANUP
 sync
-kill "$(lsof +f -t "$MNT")" 2>/dev/null
+kill "$(lsof +f -t "$MNT")" 2>/dev/null || true
 echo "Unmounting image"
 umount "$MNT/sys"
 umount "$MNT/proc"
@@ -166,7 +162,7 @@ while [[ $(mount | grep "$MNT") ]]
 do
 	echo "Alpine is still mounted, please wait.."
 	sleep 3
-	umount "$MNT"
+	umount "$MNT" 2>/dev/null || true
 done
 echo "Alpine unmounted"
 
