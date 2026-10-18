@@ -24,18 +24,18 @@ apk add xorg-server-xephyr xwininfo xdotool xinput dbus-x11 sudo bash nano git
 # --- theme engines ---
 apk add desktop-file-utils gtk-engines gtk-murrine-engine gnome-themes-extra consolekit
 
-# --- LXQt core (v3.18 community; openbox is the default WM on Xorg) ---
+# --- LXQt core (v3.20 community; lxqt-desktop depends on openbox) ---
 apk add lxqt-desktop lxqt-core lxqt-panel lxqt-admin lxqt-config \
-        lxqt-notificationd lxqt-powermanagement lxqt-themes openbox
+        lxqt-notificationd lxqt-powermanagement lxqt-themes
 # 注销/重启/关机需要 elogind + polkit-elogind
 apk add elogind polkit-elogind
 
 # --- 中文字体 + locale ---
-# font-droid-nonlatin (main仓库, ~6.5 MiB) 覆盖中文显示
+# font-droid-nonlatin (main仓库, ~6MiB) 提供轻量中文显示
 apk add musl-locales font-droid-nonlatin
 localedef -i zh_CN -f UTF-8 zh_CN.UTF-8 2>/dev/null || true
 
-# --- 中文输入法 (ibus + libpinyin, v3.18 community) ---
+# --- 中文输入法 (IBus + libpinyin, v3.20 community) ---
 apk add ibus ibus-libpinyin ibus-gtk3 ibus-lang
 
 # --- virtual keyboard + browser ---
@@ -96,15 +96,15 @@ killall Xephyr 2>/dev/null'
 [ "$(whoami)" != "root" ] && echo "This script needs to be run as root" && exec sudo -- "$0" "$@"
 
 
-# GETTING APK-TOOLS-STATIC (v3.18)
+# GETTING APK-TOOLS-STATIC (v3.20)
 echo "Determining version of apk-tools-static"
-curl "$REPO/v3.18/main/armhf/APKINDEX.tar.gz" --output /tmp/APKINDEX.tar.gz
+curl "$REPO/v3.20/main/armhf/APKINDEX.tar.gz" --output /tmp/APKINDEX.tar.gz
 tar -xzf /tmp/APKINDEX.tar.gz -C /tmp
 APKVER="$(cut -d':' -f2 <<<"$(grep -A 5 "P:apk-tools-static" /tmp/APKINDEX | grep "V:")")"
 rm /tmp/APKINDEX /tmp/APKINDEX.tar.gz /tmp/DESCRIPTION
 echo "Version of apk-tools-static is: $APKVER"
 echo "Downloading apk-tools-static"
-curl "$REPO/v3.18/main/armv7/apk-tools-static-$APKVER.apk" --output "/tmp/apk-tools-static.apk"
+curl "$REPO/v3.20/main/armv7/apk-tools-static-$APKVER.apk" --output "/tmp/apk-tools-static.apk"
 tar -xzf "/tmp/apk-tools-static.apk" -C /tmp
 
 
@@ -121,9 +121,9 @@ mkdir -p "$MNT"
 mount -o loop -t ext3 "$IMAGE" "$MNT"
 
 
-# BOOTSTRAPPING ALPINE (v3.18)
-echo "Bootstrapping Alpine v3.18"
-qemu-arm-static /tmp/sbin/apk.static -X "$REPO/v3.18/main" -U --allow-untrusted --root "$MNT" --initdb add alpine-base
+# BOOTSTRAPPING ALPINE (v3.20)
+echo "Bootstrapping Alpine v3.20"
+qemu-arm-static /tmp/sbin/apk.static -X "$REPO/v3.20/main" -U --allow-untrusted --root "$MNT" --initdb add alpine-base
 
 
 # COMPLETE IMAGE MOUNTING FOR CHROOT
@@ -133,11 +133,11 @@ mount -t proc none "$MNT/proc"
 mount -o bind /sys "$MNT/sys"
 
 
-# CONFIGURE ALPINE (仅 main + community，无 testing)
+# CONFIGURE ALPINE (仅 main + community)
 cp /etc/resolv.conf "$MNT/etc/resolv.conf"
 cat > "$MNT/etc/apk/repositories" <<EOF
-$REPO/v3.18/main
-$REPO/v3.18/community
+$REPO/v3.20/main
+$REPO/v3.20/community
 EOF
 echo "$STARTGUI" > "$MNT/startgui.sh"
 chmod +x "$MNT/startgui.sh"
