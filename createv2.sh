@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 
 # DEPENDENCIES
-# This script requires a static QEMU ARM interpreter on the host.
-# On Ubuntu 24.04+/26.04+, the package "qemu-user-static" is virtual and
-# cannot be installed directly. The static binaries are provided by
-# "qemu-user-binfmt" (at /usr/libexec/qemu-binfmt/) or "qemu-user".
-# This script auto-detects the correct binary, installing the necessary
-# package if missing.
+# This script is intended to run on a GitHub Actions runner after
+# docker/setup-qemu-action@v4 has been executed, which registers
+# binfmt_misc handlers for ARM. No qemu-arm-static binary is needed.
+# On a local x86_64 host without binfmt_misc, install qemu-user-binfmt
+# and ensure binfmt_misc is mounted, or run inside an ARM container.
 
 # BASIC CONFIGURATION
 REPO="http://dl-cdn.alpinelinux.org/alpine"
@@ -22,20 +21,11 @@ apk update
 apk upgrade
 cat /etc/alpine-release
 
-# --- X / input / 基础工具 ---
 apk add xorg-server-xephyr xwininfo xdotool xinput dbus-x11 sudo bash nano git
-
-# --- 最小窗口管理器 (Chromium 最大化 + onboard 浮动必需) ---
 apk add jwm
-
-# --- 字体 + locale ---
 apk add musl-locales font-droid-nonlatin font-dejavu
 localedef -i zh_CN -f UTF-8 zh_CN.UTF-8 2>/dev/null || true
-
-# --- 中文输入法 (IBus + libpinyin) ---
 apk add ibus ibus-libpinyin ibus-gtk3 ibus-lang
-
-# --- 虚拟键盘 + 浏览器 ---
 apk add onboard chromium
 
 adduser alpine -D
@@ -44,7 +34,6 @@ echo '%sudo ALL=(ALL) ALL' >> /etc/sudoers
 addgroup sudo
 addgroup alpine sudo
 
-# --- 输入法环境变量 ---
 cat > /etc/profile.d/ibus.sh <<'EOF'
 export GTK_IM_MODULE=ibus
 export QT_IM_MODULE=ibus
@@ -53,7 +42,6 @@ export LANG=zh_CN.UTF-8
 export LC_ALL=zh_CN.UTF-8
 EOF
 
-# --- 为 alpine 用户写入极简 jwm 配置 ---
 su alpine -c \"mkdir -p ~/.jwm
 cat > ~/.jwmrc <<'JWMRC'
 <JWM>
@@ -84,7 +72,6 @@ echo '# Default settings for chromium. This file is sourced by /bin/sh from
 mouseid=\"\$(env DISPLAY=:1 xinput list --id-only \"Xephyr virtual mouse\")\"
 CHROMIUM_FLAGS='\''--force-device-scale-factor=2 --touch-devices='\''\$mouseid'\'' --pull-to-refresh=1 --disable-smooth-scrolling --enable-low-end-device-mode --disable-login-animations --disable-modal-animations --wm-window-animations-disabled --start-maximized --user-agent=Mozilla%2F5.0%20%28Linux%3B%20Android%2014%3B%20Pixel%208%29%20AppleWebKit%2F537.36%20%28KHTML%2C%20like%20Gecko%29%20Chrome%2F131.0.6778.108%20Mobile%20Safari%2F537.36'\''' > /etc/chromium/chromium.conf
 mkdir -p /usr/share/chromium/extensions
-# Install uBlock Origin
 echo '{
 	\"external_update_url\": \"https://clients2.google.com/service/update2/crx\"
 }' > /usr/share/chromium/extensions/cjpalhdlnbpafiamejdnhcphjbkeiagm.json
@@ -97,55 +84,16 @@ sh"
 [ "$(whoami)" != "root" ] && echo "This script needs to be run as root" && exec sudo -- "$0" "$@"
 
 
-# --- FIND OR INSTALL QEMU ARM STATIC INTERPRETER ---
-# Ubuntu 24.04+ reorganized qemu packages. "qemu-user-static" is virtual.
-# We need a *static* ARM interpreter. Possible sources:
-#   1. /usr/bin/qemu-arm-static                   (legacy, still on some distros)
-#   2. /usr/libexec/qemu-binfmt/arm-binfmt-P     (Ubuntu 24.04+ via qemu-user-binfmt)
-#   3. Install "qemu-user-binfmt" and re-check.
-
-QEMU_ARM_STATIC=""
-
-# Check legacy path
-if command -v qemu-arm-static &>/dev/null; then
-    QEMU_ARM_STATIC="$(command -v qemu-arm-static)"
-fi
-
-# Check Ubuntu 24.04+ path
-if [ -z "$QEMU_ARM_STATIC" ] && [ -x /usr/libexec/qemu-binfmt/arm-binfmt-P ]; then
-    QEMU_ARM_STATIC="/usr/libexec/qemu-binfmt/arm-binfmt-P"
-fi
-
-# If not found, install the package that provides it (NOT the virtual one)
-if [ -z "$QEMU_ARM_STATIC" ]; then
-    echo "Static ARM interpreter not found. Installing qemu-user-binfmt..."
-    if command -v apt-get &>/dev/null; then
-        apt-get update
-        apt-get install -y qemu-user-binfmt
-    elif command -v pacman &>/dev/null; then
-        pacman -S --noconfirm qemu-user-static-binfmt
-    elif command -v dnf &>/dev/null; then
-        dnf install -y qemu-user-binfmt
-    else
-        echo "ERROR: Unknown package manager. Install qemu-user-binfmt manually." >&2
-        exit 1
-    fi
-
-    # Re-check after install
-    if command -v qemu-arm-static &>/dev/null; then
-        QEMU_ARM_STATIC="$(command -v qemu-arm-static)"
-    elif [ -x /usr/libexec/qemu-binfmt/arm-binfmt-P ]; then
-        QEMU_ARM_STATIC="/usr/libexec/qemu-binfmt/arm-binfmt-P"
-    fi
-fi
-
-if [ -z "$QEMU_ARM_STATIC" ]; then
-    echo "ERROR: Could not locate a static ARM interpreter." >&2
-    echo "Please install 'qemu-user-binfmt' and re-run." >&2
+# VERIFY BINFMT_MISC FOR ARM
+# setup-qemu-action should have registered the ARM handler.
+if [ ! -f /proc/sys/fs/binfmt_misc/qemu-arm ] || \
+   ! grep -q enabled /proc/sys/fs/binfmt_misc/qemu-arm; then
+    echo "ERROR: ARM binfmt_misc handler is not enabled." >&2
+    echo "Make sure docker/setup-qemu-action ran before this script," >&2
+    echo "or install qemu-user-binfmt and mount binfmt_misc." >&2
     exit 1
 fi
-
-echo "Using static ARM interpreter: $QEMU_ARM_STATIC"
+echo "ARM binfmt_misc handler is active."
 
 
 # GETTING APK-TOOLS-STATIC (v3.20)
@@ -174,8 +122,9 @@ mount -o loop -t ext3 "$IMAGE" "$MNT"
 
 
 # BOOTSTRAPPING ALPINE (v3.20)
+# binfmt_misc transparently emulates the ARM apk.static binary.
 echo "Bootstrapping Alpine v3.20"
-"$QEMU_ARM_STATIC" /tmp/sbin/apk.static -X "$REPO/v3.20/main" -U --allow-untrusted --root "$MNT" --initdb add alpine-base
+/tmp/sbin/apk.static -X "$REPO/v3.20/main" -U --allow-untrusted --root "$MNT" --initdb add alpine-base
 
 
 # COMPLETE IMAGE MOUNTING FOR CHROOT
@@ -192,7 +141,7 @@ $REPO/v3.20/main
 $REPO/v3.20/community
 EOF
 
-# 用 heredoc 写入 startgui.sh
+# 写入 startgui.sh
 cat > "$MNT/startgui.sh" <<'STARTGUI_EOF'
 #!/bin/sh
 chmod a+w /dev/shm
@@ -209,12 +158,9 @@ chmod +x "$MNT/startgui.sh"
 
 
 # CHROOT
-# 关键：复制静态解释器，并统一命名为 qemu-arm-static，因为 chroot 内的命令名是固定的
-cp "$QEMU_ARM_STATIC" "$MNT/usr/bin/qemu-arm-static"
-chmod +x "$MNT/usr/bin/qemu-arm-static"
+# binfmt_misc 同样作用于 chroot 内的 ARM 二进制，无需复制 qemu-arm-static。
 echo "Chrooting into Alpine"
-chroot "$MNT" qemu-arm-static /bin/sh -c "$ALPINESETUP"
-rm "$MNT/usr/bin/qemu-arm-static"
+chroot "$MNT" /bin/sh -c "$ALPINESETUP"
 
 
 # UNMOUNT IMAGE & CLEANUP
@@ -225,11 +171,11 @@ umount "$MNT/sys"
 umount "$MNT/proc"
 umount -lf "$MNT/dev"
 umount "$MNT"
-while [[ $(mount | grep "$MNT") ]]
+while [[ $(mount | grep "$MNT")" ]]
 do
-	echo "Alpine is still mounted, please wait.."
-	sleep 3
-	umount "$MNT" 2>/dev/null || true
+    echo "Alpine is still mounted, please wait.."
+    sleep 3
+    umount "$MNT" 2>/dev/null || true
 done
 echo "Alpine unmounted"
 
