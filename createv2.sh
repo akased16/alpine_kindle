@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 
 # DEPENDENCIES
-# qemu-arm-static is required to run arm software.
-# On Ubuntu 22.04 / Arch / Fedora: install qemu-user-static
-# On Ubuntu 24.04+: qemu-user-static is a virtual package provided by
-#   qemu-user-binfmt; the static binary lives at
-#   /usr/libexec/qemu-binfmt/arm-binfmt-P and is auto-detected below.
-# This script assumes you run it on an X86_64 host.
+# This script requires a static QEMU ARM interpreter on the host.
+# On Ubuntu 24.04+/26.04+, the package "qemu-user-static" is virtual and
+# cannot be installed directly. The static binaries are provided by
+# "qemu-user-binfmt" (at /usr/libexec/qemu-binfmt/) or "qemu-user".
+# This script auto-detects the correct binary, installing the necessary
+# package if missing.
 
 # BASIC CONFIGURATION
 REPO="http://dl-cdn.alpinelinux.org/alpine"
 MNT="/mnt/alpine"
 IMAGE="./alpine.ext3"
-IMAGESIZE=1024 #Megabytes (1G，无桌面后空间充裕)
+IMAGESIZE=1024 #Megabytes
 
 ALPINESETUP="source /etc/profile
 echo kindle > /etc/hostname
@@ -28,11 +28,11 @@ apk add xorg-server-xephyr xwininfo xdotool xinput dbus-x11 sudo bash nano git
 # --- 最小窗口管理器 (Chromium 最大化 + onboard 浮动必需) ---
 apk add jwm
 
-# --- 字体 + locale (中文显示 + Latin UI) ---
+# --- 字体 + locale ---
 apk add musl-locales font-droid-nonlatin font-dejavu
 localedef -i zh_CN -f UTF-8 zh_CN.UTF-8 2>/dev/null || true
 
-# --- 中文输入法 (IBus + libpinyin, v3.20 community) ---
+# --- 中文输入法 (IBus + libpinyin) ---
 apk add ibus ibus-libpinyin ibus-gtk3 ibus-lang
 
 # --- 虚拟键盘 + 浏览器 ---
@@ -97,45 +97,55 @@ sh"
 [ "$(whoami)" != "root" ] && echo "This script needs to be run as root" && exec sudo -- "$0" "$@"
 
 
-# ENSURE QEMU-ARM-STATIC (兼容 Ubuntu 24.04+)
-# Ubuntu 24.04 把 qemu-user-static 改成虚拟包，由 qemu-user-binfmt 提供。
-# qemu-user-binfmt 不提供 /usr/bin/qemu-arm-static，但附带静态二进制
-# /usr/libexec/qemu-binfmt/arm-binfmt-P，功能等价，自动检测并复用。
-QEMU_ARM_STATIC="$(command -v qemu-arm-static 2>/dev/null || true)"
+# --- FIND OR INSTALL QEMU ARM STATIC INTERPRETER ---
+# Ubuntu 24.04+ reorganized qemu packages. "qemu-user-static" is virtual.
+# We need a *static* ARM interpreter. Possible sources:
+#   1. /usr/bin/qemu-arm-static                   (legacy, still on some distros)
+#   2. /usr/libexec/qemu-binfmt/arm-binfmt-P     (Ubuntu 24.04+ via qemu-user-binfmt)
+#   3. Install "qemu-user-binfmt" and re-check.
 
-if [ -z "$QEMU_ARM_STATIC" ] && [ -x /usr/libexec/qemu-binfmt/arm-binfmt-P ]; then
-    QEMU_ARM_STATIC=/usr/libexec/qemu-binfmt/arm-binfmt-P
+QEMU_ARM_STATIC=""
+
+# Check legacy path
+if command -v qemu-arm-static &>/dev/null; then
+    QEMU_ARM_STATIC="$(command -v qemu-arm-static)"
 fi
 
+# Check Ubuntu 24.04+ path
+if [ -z "$QEMU_ARM_STATIC" ] && [ -x /usr/libexec/qemu-binfmt/arm-binfmt-P ]; then
+    QEMU_ARM_STATIC="/usr/libexec/qemu-binfmt/arm-binfmt-P"
+fi
+
+# If not found, install the package that provides it (NOT the virtual one)
 if [ -z "$QEMU_ARM_STATIC" ]; then
-    echo "qemu-arm-static not found, attempting to install..."
+    echo "Static ARM interpreter not found. Installing qemu-user-binfmt..."
     if command -v apt-get &>/dev/null; then
         apt-get update
-        # 优先尝试 qemu-user-static（Ubuntu 22.04 / Debian）
-        # 失败则退回 qemu-user-binfmt（Ubuntu 24.04+）
-        apt-get install -y qemu-user-static 2>/dev/null \
-            || apt-get install -y qemu-user-binfmt 2>/dev/null \
-            || apt-get install -y qemu-user
+        apt-get install -y qemu-user-binfmt
     elif command -v pacman &>/dev/null; then
-        pacman -S --noconfirm qemu-user-static-binfmt qemu-user-static 2>/dev/null \
-            || pacman -S --noconfirm qemu-user-static
+        pacman -S --noconfirm qemu-user-static-binfmt
     elif command -v dnf &>/dev/null; then
-        dnf install -y qemu-user-static
+        dnf install -y qemu-user-binfmt
+    else
+        echo "ERROR: Unknown package manager. Install qemu-user-binfmt manually." >&2
+        exit 1
     fi
 
-    QEMU_ARM_STATIC="$(command -v qemu-arm-static 2>/dev/null || true)"
-    if [ -z "$QEMU_ARM_STATIC" ] && [ -x /usr/libexec/qemu-binfmt/arm-binfmt-P ]; then
-        QEMU_ARM_STATIC=/usr/libexec/qemu-binfmt/arm-binfmt-P
+    # Re-check after install
+    if command -v qemu-arm-static &>/dev/null; then
+        QEMU_ARM_STATIC="$(command -v qemu-arm-static)"
+    elif [ -x /usr/libexec/qemu-binfmt/arm-binfmt-P ]; then
+        QEMU_ARM_STATIC="/usr/libexec/qemu-binfmt/arm-binfmt-P"
     fi
 fi
 
 if [ -z "$QEMU_ARM_STATIC" ]; then
-    echo "ERROR: qemu-arm-static not available."
-    echo "On Ubuntu 24.04+: sudo apt install qemu-user-binfmt"
-    echo "On Ubuntu 22.04 : sudo apt install qemu-user-static"
+    echo "ERROR: Could not locate a static ARM interpreter." >&2
+    echo "Please install 'qemu-user-binfmt' and re-run." >&2
     exit 1
 fi
-echo "Using QEMU ARM static binary: $QEMU_ARM_STATIC"
+
+echo "Using static ARM interpreter: $QEMU_ARM_STATIC"
 
 
 # GETTING APK-TOOLS-STATIC (v3.20)
@@ -175,7 +185,7 @@ mount -t proc none "$MNT/proc"
 mount -o bind /sys "$MNT/sys"
 
 
-# CONFIGURE ALPINE (仅 main + community)
+# CONFIGURE ALPINE (main + community)
 cp /etc/resolv.conf "$MNT/etc/resolv.conf"
 cat > "$MNT/etc/apk/repositories" <<EOF
 $REPO/v3.20/main
@@ -191,7 +201,6 @@ SIZE=$(xwininfo -root -display :0 | egrep "geometry" | cut -d " "  -f4)
 env DISPLAY=:0 Xephyr :1 -title "L:D_N:application_ID:xephyr" -ac -br -screen $SIZE -cc 4 -reset -terminate &
 sleep 3
 
-# 以 alpine 用户身份，在同一 session bus 中启动 ibus + jwm + onboard + chromium
 su alpine -c "export DISPLAY=:1 GTK_IM_MODULE=ibus QT_IM_MODULE=ibus XMODIFIERS=@im=ibus LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8; exec dbus-run-session -- sh -c 'ibus-daemon -drx; jwm & sleep 1; onboard & chromium'"
 
 killall Xephyr 2>/dev/null
@@ -200,7 +209,7 @@ chmod +x "$MNT/startgui.sh"
 
 
 # CHROOT
-# 复制静态模拟器，并统一重命名为 qemu-arm-static（chroot 内命令名不变）
+# 关键：复制静态解释器，并统一命名为 qemu-arm-static，因为 chroot 内的命令名是固定的
 cp "$QEMU_ARM_STATIC" "$MNT/usr/bin/qemu-arm-static"
 chmod +x "$MNT/usr/bin/qemu-arm-static"
 echo "Chrooting into Alpine"
