@@ -8,7 +8,7 @@
 REPO="http://dl-cdn.alpinelinux.org/alpine"
 MNT="/mnt/alpine"
 IMAGE="./alpine.ext3"
-IMAGESIZE=1536 #Megabytes (1.5G)
+IMAGESIZE=1024 #Megabytes (1G，无桌面后空间充裕)
 
 ALPINESETUP="source /etc/profile
 echo kindle > /etc/hostname
@@ -18,27 +18,20 @@ apk update
 apk upgrade
 cat /etc/alpine-release
 
-# --- X / input / base tools ---
+# --- X / input / 基础工具 ---
 apk add xorg-server-xephyr xwininfo xdotool xinput dbus-x11 sudo bash nano git
 
-# --- theme engines ---
-apk add desktop-file-utils gtk-engines gtk-murrine-engine gnome-themes-extra consolekit
+# --- 最小窗口管理器 (Chromium 最大化 + onboard 浮动必需) ---
+apk add jwm
 
-# --- LXQt core (v3.20 community; lxqt-desktop depends on openbox) ---
-apk add lxqt-desktop lxqt-core lxqt-panel lxqt-admin lxqt-config \
-        lxqt-notificationd lxqt-powermanagement lxqt-themes
-# 注销/重启/关机需要 elogind + polkit-elogind
-apk add elogind polkit-elogind
-
-# --- 中文字体 + locale ---
-# font-droid-nonlatin (main仓库, ~6MiB) 提供轻量中文显示
-apk add musl-locales font-droid-nonlatin
+# --- 字体 + locale (中文显示 + Latin UI) ---
+apk add musl-locales font-droid-nonlatin font-dejavu
 localedef -i zh_CN -f UTF-8 zh_CN.UTF-8 2>/dev/null || true
 
 # --- 中文输入法 (IBus + libpinyin, v3.20 community) ---
 apk add ibus ibus-libpinyin ibus-gtk3 ibus-lang
 
-# --- virtual keyboard + browser ---
+# --- 虚拟键盘 + 浏览器 ---
 apk add onboard chromium
 
 adduser alpine -D
@@ -47,7 +40,7 @@ echo '%sudo ALL=(ALL) ALL' >> /etc/sudoers
 addgroup sudo
 addgroup alpine sudo
 
-# --- 输入法环境变量 (全局兜底) ---
+# --- 输入法环境变量 ---
 cat > /etc/profile.d/ibus.sh <<'EOF'
 export GTK_IM_MODULE=ibus
 export QT_IM_MODULE=ibus
@@ -56,12 +49,28 @@ export LANG=zh_CN.UTF-8
 export LC_ALL=zh_CN.UTF-8
 EOF
 
-su alpine -c \"cd ~
+# --- 为 alpine 用户写入极简 jwm 配置 ---
+su alpine -c \"mkdir -p ~/.jwm
+cat > ~/.jwmrc <<'JWMRC'
+<JWM>
+  <RootMenu onroot=\\\"3\\\">
+    <Program label=\\\"Chromium\\\" icon=\\\"chromium\\\">chromium</Program>
+    <Program label=\\\"Onboard\\\" icon=\\\"onboard\\\">onboard</Program>
+    <Separator/>
+    <Restart label=\\\"Restart JWM\\\" icon=\\\"restart\\\"/>
+    <Exit label=\\\"Exit\\\" confirm=\\\"true\\\"/>
+  </RootMenu>
+  <Tray x=\\\"0\\\" y=\\\"-1\\\" height=\\\"28\\\">
+    <TaskList maxwidth=\\\"800\\\"/>
+    <Clock format=\\\"%H:%M\\\"/>
+  </Tray>
+</JWM>
+JWMRC
+cd ~
 git init
 git remote add origin https://github.com/schuhumi/alpine_kindle_dotfiles
 git pull origin master
 git reset --hard origin/master
-dconf load /org/mate/ < ~/.config/org_mate.dconf.dump 2>/dev/null || true
 dconf load /org/onboard/ < ~/.config/org_onboard.dconf.dump 2>/dev/null || true\"
 
 echo '# Default settings for chromium. This file is sourced by /bin/sh from
@@ -69,7 +78,7 @@ echo '# Default settings for chromium. This file is sourced by /bin/sh from
 
 # Options to pass to chromium.
 mouseid=\"\$(env DISPLAY=:1 xinput list --id-only \"Xephyr virtual mouse\")\"
-CHROMIUM_FLAGS='\''--force-device-scale-factor=2 --touch-devices='\''\$mouseid'\'' --pull-to-refresh=1 --disable-smooth-scrolling --enable-low-end-device-mode --disable-login-animations --disable-modal-animations --wm-window-animations-disabled --start-maximized --user-agent=Mozilla%2F5.0%20%28Linux%3B%20Android%207.0%3B%20SM-G930V%20Build%2FNRD90M%29%20AppleWebKit%2F537.36%20%28KHTML%2C%20like%20Gecko%29%20Chrome%2F59.0.3071.125%20Mobile%20Safari%2F537.36'\''' > /etc/chromium/chromium.conf
+CHROMIUM_FLAGS='\''--force-device-scale-factor=2 --touch-devices='\''\$mouseid'\'' --pull-to-refresh=1 --disable-smooth-scrolling --enable-low-end-device-mode --disable-login-animations --disable-modal-animations --wm-window-animations-disabled --start-maximized --user-agent=Mozilla%2F5.0%20%28Linux%3B%20Android%2014%3B%20Pixel%208%29%20AppleWebKit%2F537.36%20%28KHTML%2C%20like%20Gecko%29%20Chrome%2F131.0.6778.108%20Mobile%20Safari%2F537.36'\''' > /etc/chromium/chromium.conf
 mkdir -p /usr/share/chromium/extensions
 # Install uBlock Origin
 echo '{
@@ -78,18 +87,6 @@ echo '{
 
 echo \"You're now dropped into an interactive shell in Alpine, feel free to explore and type exit to leave.\"
 sh"
-
-STARTGUI='#!/bin/sh
-chmod a+w /dev/shm
-
-SIZE=$(xwininfo -root -display :0 | egrep "geometry" | cut -d " "  -f4)
-env DISPLAY=:0 Xephyr :1 -title "L:D_N:application_ID:xephyr" -ac -br -screen $SIZE -cc 4 -reset -terminate &
-sleep 3
-
-# 以 alpine 用户身份，在同一个 session bus 中启动 ibus 和 LXQt
-su alpine -c "export DISPLAY=:1 GTK_IM_MODULE=ibus QT_IM_MODULE=ibus XMODIFIERS=@im=ibus LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8; exec dbus-run-session -- sh -c 'ibus-daemon -drx; lxqt-session'"
-
-killall Xephyr 2>/dev/null'
 
 
 # ENSURE ROOT
@@ -139,7 +136,21 @@ cat > "$MNT/etc/apk/repositories" <<EOF
 $REPO/v3.20/main
 $REPO/v3.20/community
 EOF
-echo "$STARTGUI" > "$MNT/startgui.sh"
+
+# 用 heredoc 写入 startgui.sh
+cat > "$MNT/startgui.sh" <<'STARTGUI_EOF'
+#!/bin/sh
+chmod a+w /dev/shm
+
+SIZE=$(xwininfo -root -display :0 | egrep "geometry" | cut -d " "  -f4)
+env DISPLAY=:0 Xephyr :1 -title "L:D_N:application_ID:xephyr" -ac -br -screen $SIZE -cc 4 -reset -terminate &
+sleep 3
+
+# 以 alpine 用户身份，在同一 session bus 中启动 ibus + jwm + onboard + chromium
+su alpine -c "export DISPLAY=:1 GTK_IM_MODULE=ibus QT_IM_MODULE=ibus XMODIFIERS=@im=ibus LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8; exec dbus-run-session -- sh -c 'ibus-daemon -drx; jwm & sleep 1; onboard & chromium'"
+
+killall Xephyr 2>/dev/null
+STARTGUI_EOF
 chmod +x "$MNT/startgui.sh"
 
 
