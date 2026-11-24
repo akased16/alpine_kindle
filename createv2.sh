@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 
 # DEPENDENCIES
-# qemu-user-static is required to run arm software using the "qemu-arm-static" command
-# (assumes you run this on an X86_64 host). Install it via your package manager.
+# qemu-arm-static is required to run arm software.
+# On Ubuntu 22.04 / Arch / Fedora: install qemu-user-static
+# On Ubuntu 24.04+: qemu-user-static is a virtual package provided by
+#   qemu-user-binfmt; the static binary lives at
+#   /usr/libexec/qemu-binfmt/arm-binfmt-P and is auto-detected below.
+# This script assumes you run it on an X86_64 host.
 
 # BASIC CONFIGURATION
 REPO="http://dl-cdn.alpinelinux.org/alpine"
@@ -93,6 +97,47 @@ sh"
 [ "$(whoami)" != "root" ] && echo "This script needs to be run as root" && exec sudo -- "$0" "$@"
 
 
+# ENSURE QEMU-ARM-STATIC (兼容 Ubuntu 24.04+)
+# Ubuntu 24.04 把 qemu-user-static 改成虚拟包，由 qemu-user-binfmt 提供。
+# qemu-user-binfmt 不提供 /usr/bin/qemu-arm-static，但附带静态二进制
+# /usr/libexec/qemu-binfmt/arm-binfmt-P，功能等价，自动检测并复用。
+QEMU_ARM_STATIC="$(command -v qemu-arm-static 2>/dev/null || true)"
+
+if [ -z "$QEMU_ARM_STATIC" ] && [ -x /usr/libexec/qemu-binfmt/arm-binfmt-P ]; then
+    QEMU_ARM_STATIC=/usr/libexec/qemu-binfmt/arm-binfmt-P
+fi
+
+if [ -z "$QEMU_ARM_STATIC" ]; then
+    echo "qemu-arm-static not found, attempting to install..."
+    if command -v apt-get &>/dev/null; then
+        apt-get update
+        # 优先尝试 qemu-user-static（Ubuntu 22.04 / Debian）
+        # 失败则退回 qemu-user-binfmt（Ubuntu 24.04+）
+        apt-get install -y qemu-user-static 2>/dev/null \
+            || apt-get install -y qemu-user-binfmt 2>/dev/null \
+            || apt-get install -y qemu-user
+    elif command -v pacman &>/dev/null; then
+        pacman -S --noconfirm qemu-user-static-binfmt qemu-user-static 2>/dev/null \
+            || pacman -S --noconfirm qemu-user-static
+    elif command -v dnf &>/dev/null; then
+        dnf install -y qemu-user-static
+    fi
+
+    QEMU_ARM_STATIC="$(command -v qemu-arm-static 2>/dev/null || true)"
+    if [ -z "$QEMU_ARM_STATIC" ] && [ -x /usr/libexec/qemu-binfmt/arm-binfmt-P ]; then
+        QEMU_ARM_STATIC=/usr/libexec/qemu-binfmt/arm-binfmt-P
+    fi
+fi
+
+if [ -z "$QEMU_ARM_STATIC" ]; then
+    echo "ERROR: qemu-arm-static not available."
+    echo "On Ubuntu 24.04+: sudo apt install qemu-user-binfmt"
+    echo "On Ubuntu 22.04 : sudo apt install qemu-user-static"
+    exit 1
+fi
+echo "Using QEMU ARM static binary: $QEMU_ARM_STATIC"
+
+
 # GETTING APK-TOOLS-STATIC (v3.20)
 echo "Determining version of apk-tools-static"
 curl "$REPO/v3.20/main/armhf/APKINDEX.tar.gz" --output /tmp/APKINDEX.tar.gz
@@ -120,7 +165,7 @@ mount -o loop -t ext3 "$IMAGE" "$MNT"
 
 # BOOTSTRAPPING ALPINE (v3.20)
 echo "Bootstrapping Alpine v3.20"
-qemu-arm-static /tmp/sbin/apk.static -X "$REPO/v3.20/main" -U --allow-untrusted --root "$MNT" --initdb add alpine-base
+"$QEMU_ARM_STATIC" /tmp/sbin/apk.static -X "$REPO/v3.20/main" -U --allow-untrusted --root "$MNT" --initdb add alpine-base
 
 
 # COMPLETE IMAGE MOUNTING FOR CHROOT
@@ -155,9 +200,11 @@ chmod +x "$MNT/startgui.sh"
 
 
 # CHROOT
-cp "$(which qemu-arm-static)" "$MNT/usr/bin/"
+# 复制静态模拟器，并统一重命名为 qemu-arm-static（chroot 内命令名不变）
+cp "$QEMU_ARM_STATIC" "$MNT/usr/bin/qemu-arm-static"
+chmod +x "$MNT/usr/bin/qemu-arm-static"
 echo "Chrooting into Alpine"
-chroot /mnt/alpine/ qemu-arm-static /bin/sh -c "$ALPINESETUP"
+chroot "$MNT" qemu-arm-static /bin/sh -c "$ALPINESETUP"
 rm "$MNT/usr/bin/qemu-arm-static"
 
 
