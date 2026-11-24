@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
 
 # DEPENDENCIES
-# This script is intended to run on a GitHub Actions runner after
-# docker/setup-qemu-action@v4 has been executed, which registers
-# binfmt_misc handlers for ARM. No qemu-arm-static binary is needed.
-# On a local x86_64 host without binfmt_misc, install qemu-user-binfmt
-# and ensure binfmt_misc is mounted, or run inside an ARM container.
+# Runs on GitHub Actions after docker/setup-qemu-action (binfmt_misc).
+# No qemu-arm-static command is required.
 
 # BASIC CONFIGURATION
 REPO="http://dl-cdn.alpinelinux.org/alpine"
@@ -85,12 +82,10 @@ sh"
 
 
 # VERIFY BINFMT_MISC FOR ARM
-# setup-qemu-action should have registered the ARM handler.
 if [ ! -f /proc/sys/fs/binfmt_misc/qemu-arm ] || \
    ! grep -q enabled /proc/sys/fs/binfmt_misc/qemu-arm; then
     echo "ERROR: ARM binfmt_misc handler is not enabled." >&2
-    echo "Make sure docker/setup-qemu-action ran before this script," >&2
-    echo "or install qemu-user-binfmt and mount binfmt_misc." >&2
+    echo "Ensure docker/setup-qemu-action ran before this script." >&2
     exit 1
 fi
 echo "ARM binfmt_misc handler is active."
@@ -122,7 +117,6 @@ mount -o loop -t ext3 "$IMAGE" "$MNT"
 
 
 # BOOTSTRAPPING ALPINE (v3.20)
-# binfmt_misc transparently emulates the ARM apk.static binary.
 echo "Bootstrapping Alpine v3.20"
 /tmp/sbin/apk.static -X "$REPO/v3.20/main" -U --allow-untrusted --root "$MNT" --initdb add alpine-base
 
@@ -158,7 +152,6 @@ chmod +x "$MNT/startgui.sh"
 
 
 # CHROOT
-# binfmt_misc 同样作用于 chroot 内的 ARM 二进制，无需复制 qemu-arm-static。
 echo "Chrooting into Alpine"
 chroot "$MNT" /bin/sh -c "$ALPINESETUP"
 
@@ -171,7 +164,7 @@ umount "$MNT/sys"
 umount "$MNT/proc"
 umount -lf "$MNT/dev"
 umount "$MNT"
-while [[ $(mount | grep "$MNT")" ]]
+while [[ $(mount | grep "$MNT") ]]
 do
     echo "Alpine is still mounted, please wait.."
     sleep 3
